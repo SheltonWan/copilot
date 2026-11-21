@@ -4,6 +4,26 @@ description: "项目级 Agent 指令 — 文档创建后自动转换为 PDF"
 
 # 项目指令
 
+## KnowFlow 公开发布
+
+当在 `docs/` 目录下创建或修改 Markdown（`.md`）文件时，在完成“文档自动转 PDF”规则并确认 PDF 已同步到 iCloud 后，必须调用 KnowFlow CLI 将该文档公开发布。
+
+### 规则
+
+1. **执行顺序**：必须先完成 Markdown 转 PDF 和 PDF iCloud 同步，确认成功后再发布；任一步失败都不得继续发布。
+2. **推荐命令**：使用已安装的全局 `knowflow` CLI：
+      ```bash
+      knowflow publish docs/<subdir>/<filename>.md --title "<文档标题>" --tags "<标签1>,<标签2>"
+      ```
+3. **CLI 配置**：确保 `KNOWFLOW_SITE` 和 `KNOWFLOW_API_KEY` 已通过环境变量提供；如项目存在 `knowflow/.env.myknowflow`，发布前使用 `set -a && source knowflow/.env.myknowflow && set +a` 加载。禁止在提示词、命令输出、文档或提交文件中暴露 API Key。
+4. **可选参数**：可根据文档内容使用 `--space <slug>`、`--tags <list>`、`--title <title>`、`--json`、`--quiet` 或 `--verbose`；API Key 不得作为命令行参数传入。
+5. **回退方式**：CLI 不可用时，停止发布并报告缺少 CLI 或配置，不要自行改用未验证的 HTTP 请求。
+      ```bash
+      set -a && source knowflow/.env.myknowflow && set +a
+      knowflow publish docs/<subdir>/<filename>.md --title "<文档标题>" --tags "<标签1>,<标签2>"
+      ```
+6. **发布结果**：发布成功后返回 KnowFlow 公开文章的绝对 URL；发布失败时保留错误信息并停止，不绕过安全扫描或强行重试。
+
 ## 文档自动转 PDF
 
 当在 `docs/` 目录下创建或修改任何 Markdown（`.md`）文件后，**必须** 自动调用 `~/aitools/md_to_pdf.sh` 将其转换为 PDF；PDF 创建或更新后，还必须自动复制到 `~/Library/Mobile Documents/com~apple~CloudDocs/copilot/pdf`。
