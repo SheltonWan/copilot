@@ -16,7 +16,12 @@
 7. [管理与安全](#7-管理与安全)
 8. [与 Copilot Agent 配合](#8-与-copilot-agent-配合)
    - [四个问题判断数据流](#81-四个问题判断数据流)
-   - [Agent 记忆与状态保存位置](#83-agent-记忆与状态保存位置)
+   - [补全、Chat 和 Agent 怎么用上下文](#82-补全chat-和-agent-怎么用上下文)
+   - [不要把隧道加密当成 AI 数据隔离](#83-不要把隧道加密当成-ai-数据隔离)
+   - [Agent 记忆与状态保存位置](#84-agent-记忆与状态保存位置)
+   - [网络不稳定时的表现](#85-网络不稳定时的表现)
+   - [在自己的环境中验证](#86-在自己的环境中验证)
+   - [典型场景](#87-典型场景)
 9. [故障排查](#9-故障排查)
 10. [最佳实践](#10-最佳实践)
     - [多台 Mac 的推荐分工](#多台-mac-的推荐分工)
@@ -334,7 +339,16 @@ flowchart LR
     AgentLink -->|"显示结果"| ChatView
 ```
 
-### 8.3 Agent 记忆与状态保存位置
+### 8.3 不要把隧道加密当成 AI 数据隔离
+
+- **远程会话**：打开文件和回传终端输出走加密隧道；这不会自动触发 Copilot 上传。
+- **模型推理**：每轮使用选取的上下文，不是每次把整个仓库发给模型，也不一定只用当前文件。
+- **语义索引**：支持的托管仓库可以使用已有索引。如果账号策略和工作区设置允许使用 **External ingest**，可索引文件可能另行上传到 GitHub。这与单次推理请求是两条链路。
+- **敏感文件**：`.gitignore` 和 [Copilot 内容排除](https://docs.github.com/en/copilot/concepts/security-governance-and-network-settings/content-exclusion)不能当作文件系统权限。打开或选中被忽略的文件仍可能提供上下文；内容排除对远程文件系统、符号链接及第三方工具有适用限制。敏感文件应靠权限隔离；有禁止外发要求的工作区，应通过组织策略限制托管 AI 和外部索引。
+
+参考：[VS Code 工作区上下文与语义索引](https://code.visualstudio.com/docs/agents/reference/workspace-context) · [Agent Host 架构](https://code.visualstudio.com/docs/agents/concepts/agent-host) · [Copilot 网络端点](https://docs.github.com/en/copilot/reference/copilot-allowlist-reference)
+
+### 8.4 Agent 记忆与状态保存位置
 
 这里的“记忆”不是单一的数据项，需要区分项目上下文、执行状态、聊天记录和客户端缓存：
 
@@ -351,27 +365,18 @@ flowchart LR
 
 对于长时间任务，建议让任务在远程终端或服务器上的独立进程中运行，并使用 `tmux`、`screen` 或后台服务管理。仅依赖当前客户端前台会话的任务，在客户端断开、VS Code Server 重启或认证失效时，可能无法继续。
 
-### 8.4 不要把隧道加密当成 AI 数据隔离
-
-- **远程会话**：打开文件和回传终端输出走加密隧道；这不会自动触发 Copilot 上传。
-- **模型推理**：每轮使用选取的上下文，不是每次把整个仓库发给模型，也不一定只用当前文件。
-- **语义索引**：支持的托管仓库可以使用已有索引。如果账号策略和工作区设置允许使用 **External ingest**，可索引文件可能另行上传到 GitHub。这与单次推理请求是两条链路。
-- **敏感文件**：`.gitignore` 和 [Copilot 内容排除](https://docs.github.com/en/copilot/concepts/security-governance-and-network-settings/content-exclusion)不能当作文件系统权限。打开或选中被忽略的文件仍可能提供上下文；内容排除对远程文件系统、符号链接及第三方工具有适用限制。敏感文件应靠权限隔离；有禁止外发要求的工作区，应通过组织策略限制托管 AI 和外部索引。
-
-参考：[VS Code 工作区上下文与语义索引](https://code.visualstudio.com/docs/agents/reference/workspace-context) · [Agent Host 架构](https://code.visualstudio.com/docs/agents/concepts/agent-host) · [Copilot 网络端点](https://docs.github.com/en/copilot/reference/copilot-allowlist-reference)
-
-### 8.5 在自己的环境中验证
-
-1. 在远程窗口的终端运行 `hostname` 和 `pwd`，核对远程机或容器及项目目录。也可以让 Agent 用只读命令报告位置，确认该会话使用的是预期环境。
-2. 保存一个无敏感内容的测试文件，再从远程机的独立终端检查文件内容或运行 `git diff`，确认写入位置。
-3. 用无敏感样例发起一轮 Chat，查看 [Chat Debug View](https://code.visualstudio.com/docs/agents/agent-troubleshooting/chat-debug-view) 中记录的模型请求、上下文和工具结果。若要确认是谁发起出站请求，再按时间对照本地和远程代理或出口日志；不要公开共享可能含源码的调试记录。
-
-### 8.6 网络不稳定时的表现
+### 8.5 网络不稳定时的表现
 
 - **已独立运行的任务**：远程终端进程、后台服务或已脱离客户端的任务通常会继续执行
 - **依赖前台会话的任务**：可能因客户端断开、Server 重启或进程退出而中止
 - **恢复连接**：远程工作区仍在服务器上；编辑器标签页、终端输出和聊天上下文能否完整恢复，取决于具体客户端及会话保存状态
 - **建议**：长时间任务先确认网络环境稳定
+
+### 8.6 在自己的环境中验证
+
+1. 在远程窗口的终端运行 `hostname` 和 `pwd`，核对远程机或容器及项目目录。也可以让 Agent 用只读命令报告位置，确认该会话使用的是预期环境。
+2. 保存一个无敏感内容的测试文件，再从远程机的独立终端检查文件内容或运行 `git diff`，确认写入位置。
+3. 用无敏感样例发起一轮 Chat，查看 [Chat Debug View](https://code.visualstudio.com/docs/agents/agent-troubleshooting/chat-debug-view) 中记录的模型请求、上下文和工具结果。若要确认是谁发起出站请求，再按时间对照本地和远程代理或出口日志；不要公开共享可能含源码的调试记录。
 
 ### 8.7 典型场景
 
