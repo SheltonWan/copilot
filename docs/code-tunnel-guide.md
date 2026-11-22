@@ -1,13 +1,13 @@
 # VS Code Remote Tunnels 使用指南
 
-> 一条命令，安全地从任何设备访问你的开发环境。无需 SSH，无需 VPN，无需公网 IP。
+> 从 VS Code 或浏览器访问远程开发环境，无需自行配置 SSH 服务、VPN 或公网 IP。
 
 ---
 
 ## 目录
 
 1. [什么是 Remote Tunnels](#1-什么是-remote-tunnels)
-   - [链接原理与数据流详解](#链接原理与数据流详解)
+   - [连接原理与数据流详解](#连接原理与数据流详解)
 2. [环境准备：安装 code CLI](#2-环境准备安装-code-cli)
 3. [快速上手](#3-快速上手)
 4. [常用命令速查](#4-常用命令速查)
@@ -15,7 +15,13 @@
 6. [后台服务模式](#6-后台服务模式)
 7. [管理与安全](#7-管理与安全)
 8. [与 Copilot Agent 配合](#8-与-copilot-agent-配合)
-    - [Agent 记忆与状态保存位置](#agent-记忆与状态保存位置)
+   - [四个问题判断数据流](#81-四个问题判断数据流)
+   - [补全、Chat 和 Agent 怎么用上下文](#82-补全chat-和-agent-怎么用上下文)
+   - [不要把隧道加密当成 AI 数据隔离](#83-不要把隧道加密当成-ai-数据隔离)
+   - [Agent 记忆与状态保存位置](#84-agent-记忆与状态保存位置)
+   - [网络不稳定时的表现](#85-网络不稳定时的表现)
+   - [在自己的环境中验证](#86-在自己的环境中验证)
+   - [典型场景](#87-典型场景)
 9. [故障排查](#9-故障排查)
 10. [最佳实践](#10-最佳实践)
     - [多台 Mac 的推荐分工](#多台-mac-的推荐分工)
@@ -25,258 +31,94 @@
 
 ## 1. 什么是 Remote Tunnels
 
-Remote Tunnels 是 VS Code 内置的安全远程访问方案。它在你的远程机器上运行 VS Code Server，通过 GitHub 账号认证建立加密隧道，让你在任何地方的任何设备上，通过浏览器或 VS Code 连接到远程机器，获得**完整的 VS Code 开发体验**。
+Remote Tunnels 是 VS Code 的远程开发功能。**GitHub 或 Microsoft 账号用于身份认证，Azure 上的 Microsoft Dev Tunnels 服务负责中继连接，远程机上的 VS Code Server 负责工作区操作。** 客户端打开的是远程项目，不必先把仓库克隆到本地。
 
 ### 核心优势
 
 | 特性 | 说明 |
 |------|------|
-| 🔐 安全 | 通过 GitHub 账号认证，端到端加密 |
+| 🔐 安全 | 两端用同一 GitHub 或 Microsoft 账号认证，VS Code 远程会话端到端加密 |
 | 🚫 无需公网 IP | 远程机器在 NAT/防火墙后面也能用 |
-| 🚫 无需 SSH | 不需要配置 SSH key、端口转发 |
+| 🚫 无需自建 SSH | 不用配置 `sshd`、SSH 密钥或入站端口 |
 | 🌐 跨设备 | Windows/macOS/Linux 服务端，任意设备客户端 |
 | 📱 手机友好 | 平板/手机通过 vscode.dev 连接 |
-| ⚡ 完整体验 | 终端、扩展、Copilot、Agent 全部可用 |
+| ⚡ 远程开发 | 支持远程终端和工作区扩展；Copilot 能力视客户端、版本和组织策略而定 |
 
 ### 与其他方案对比
 
-| 方案 | 需 SSH | 需公网 IP | 需 VPN | 浏览器可用 | 手机可用 | 成本 |
+| 方案 | 需自行配置 SSH | 需公网 IP | 需 VPN | 浏览器可用 | 手机可用 | 成本 |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Remote Tunnels** | ❌ | ❌ | ❌ | ✅ | ✅ | 免费 |
-| Remote-SSH | ✅ | ✅ | ❌ | ❌ | ❌ | 免费 |
+| Remote-SSH | ✅ | 不一定 | 不一定 | ❌ | ❌ | 免费 |
 | GitHub Codespaces | ❌ | ❌ | ❌ | ✅ | ✅ | 付费 |
 | 自建 VPN + SSH | ✅ | ✅ | ✅ | ❌ | ❌ | 需运维 |
 
-### 架构原理
+### 连接原理与数据流详解
 
+#### 建立连接：身份认证与中继是两回事
+
+<!-- mermaid-checked: no \n, no em-dash/en-dash, no {} in labels, subgraphs are id["label"], arrows are -->|"label"|, all subgraphs closed by end, ids unique -->
 ```mermaid
-graph TB
-    subgraph "📱 本地设备"
-        A[浏览器 / VS Code UI]
-    end
-    subgraph "☁️ GitHub 隧道服务"
-        B[加密中继]
-    end
-    subgraph "🖥️ 远程设备"
-        C[VS Code Server]
-        D[文件系统]
-        E[终端]
-        F[扩展]
-    end
-    subgraph "🤖 Copilot"
-        G[AI 云端推理]
-    end
+flowchart TD
+    TunnelHost["远程开发机：code tunnel"]
+    TunnelClient["客户端：桌面 VS Code 或 vscode.dev"]
+    IdentityProvider["GitHub 或 Microsoft"]
+    AzureRelay["Microsoft Dev Tunnels 中继 - Azure"]
+    VscodeServer["远程开发机：VS Code Server"]
 
-    A <-->|HTTPS| B
-    B <-->|WebSocket| C
-    C --> D
-    C --> E
-    C --> F
-    C <-->|API| G
+    TunnelHost -->|"1. 登录并授权"| IdentityProvider
+    TunnelHost -->|"2. 出站注册并托管隧道"| AzureRelay
+    TunnelClient -->|"3. 使用同一账号登录"| IdentityProvider
+    TunnelClient -->|"4. 出站连接获准访问的隧道"| AzureRelay
+    TunnelHost -->|"按需准备并启动"| VscodeServer
+    AzureRelay -->|"5. 转发加密的远程会话"| VscodeServer
 ```
 
-> 💡 **关键点**：所有计算（代码分析、终端命令、Agent 执行）都在远程设备上完成。Copilot AI 推理在 GitHub 云端。本地设备只做 UI 渲染，资源消耗极低。
+两端都向 Azure 服务发起**出站连接**，通常不必修改入站规则。隧道 URL 是入口，不是访问凭证。按 [VS Code 官方说明](https://code.visualstudio.com/docs/remote/tunnels#_how-are-tunnels-secured)，VS Code 在隧道内建立 SSH 连接来保护远程会话；**端到端加密不是仅靠两段到中继的 TLS，也不要求你在远程机上运行 `sshd`**。转发的 Web 预览和 Copilot 请求各有自己的传输和访问规则，不能套用这个结论。
 
-### 链接原理与数据流详解
+#### 打开、编辑和运行远程项目
 
-#### 整体架构：三层模型
-
+<!-- mermaid-checked: no \n, no em-dash/en-dash, no {} in labels, subgraphs are id["label"], arrows are -->|"label"|, all subgraphs closed by end, ids unique -->
 ```mermaid
-graph TB
-    subgraph "📱 客户端（任意设备）"
-        A[浏览器 vscode.dev<br/>或 VS Code 桌面客户端]
-    end
-    subgraph "☁️ GitHub 隧道中继服务"
-        B[加密中继<br/>*.tunnels.api.visualstudio.com]
-    end
-    subgraph "🖥️ 远程服务端（你的开发机）"
-        C[VS Code Server]
-        D[文件系统]
-        E[终端进程]
-        F[扩展宿主]
-    end
-    subgraph "🤖 Copilot"
-        G[AI 推理云端]
-    end
+flowchart LR
+    EditBuffer["客户端：编辑器缓冲区"]
+    TerminalView["客户端：终端和调试界面"]
+    RemoteSession["加密的 VS Code 远程会话"]
+    WorkspaceServer["远程 VS Code Server"]
+    WorkspaceDisk[("远程项目目录和 Git 工作树")]
+    RuntimeTools["远程终端、构建和调试工具"]
 
-    A <-->|HTTPS / WSS| B
-    B <-->|WebSocket 长连接| C
-    C --> D & E & F
-    C <-->|HTTPS API| G
+    EditBuffer -->|"列目录、读文件、保存"| RemoteSession
+    TerminalView -->|"终端输入和调试操作"| RemoteSession
+    RemoteSession -->|"转发请求"| WorkspaceServer
+    WorkspaceServer -->|"读写文件"| WorkspaceDisk
+    WorkspaceServer -->|"启动或调用"| RuntimeTools
+    RuntimeTools -->|"读取源码或写入产物"| WorkspaceDisk
+    WorkspaceServer -->|"回传源码和运行结果"| RemoteSession
+    RemoteSession -->|"文件内容和保存结果"| EditBuffer
+    RemoteSession -->|"日志、断点和变量"| TerminalView
 ```
 
-核心思想：**客户端和服务端不直接通信**，而是通过 GitHub 托管的隧道中继（Tunnel Relay）进行中转。这使得双方都可以在 NAT/防火墙后面，无需公网 IP。
+| 操作 | 数据走向 |
+|------|------|
+| 打开目录或文件 | 目录条目和所请求的文件内容从远程机经隧道到客户端。**没有自动克隆整仓，但客户端确实收到了源码文本**，不是只接收远程桌面画面。 |
+| 手动编辑并保存 | 输入先更新客户端编辑器缓冲区；保存或自动保存时，写入请求经隧道修改远程磁盘。未保存不等于不可见，例如编辑器选区仍可能作为 Copilot 上下文。 |
+| 终端、构建、测试和调试 | 在远程工作区启动时，使用远程环境里的运行时、依赖和路径；输出按需回到客户端。打开浏览器里的 `localhost` 默认还是客户端本机，要访问远程服务需用当前连接支持的[远程浏览或端口访问方式](https://code.visualstudio.com/docs/debugtest/port-forwarding)。 |
+| 扩展和语言服务 | 依赖工作区的语言服务通常靠近远程文件运行；客户端除了渲染界面，还维护编辑器状态，并可能运行本地或 Web 扩展。见 [VS Code 扩展宿主说明](https://code.visualstudio.com/api/advanced-topics/extension-host)。 |
+| Git 操作 | 在远程终端执行 `git commit`，提交写入远程 Git 仓库；`git push/pull` 则让远程机与 Git 托管服务通信，不是隧道同步。 |
 
----
+#### 断连与恢复
 
-#### 链接建立原理（逐步拆解）
-
-##### 第 1 步：认证 — GitHub OAuth Device Flow
-
-```mermaid
-sequenceDiagram
-    participant R as 远程机器
-    participant G as GitHub<br/>认证服务器
-    participant B as 用户浏览器
-
-    R->>G: 1. code tunnel 启动，请求设备码
-    G-->>R: 返回 8 位设备码
-    Note over R,B: 2. 用户在浏览器输入设备码并授权<br/>https://github.com/login/device
-    R->>G: 3. 用设备码换取 Access Token
-    G-->>R: 返回 OAuth Token
-    Note over R: 4. Token 本地缓存 (~/.vscode-server/)
-```
-
-- 使用的是 **OAuth 2.0 Device Authorization Grant**（RFC 8628）
-- 设备码有效期短（通常 15 分钟），token 可长期缓存
-- 这一步建立了 **"这台机器属于哪个 GitHub 用户"** 的绑定关系
-
-##### 第 2 步：隧道注册 — 与中继服务建立 WebSocket
-
-```mermaid
-sequenceDiagram
-    participant R as 远程机器
-    participant T as GitHub<br/>Tunnel Relay
-
-    R->>T: 1. 携带 OAuth Token，发起 WSS 连接<br/>wss://xxx.tunnels.api.visualstudio.com
-    T-->>R: WebSocket 连接建立
-    R->>T: 2. REGISTER {name: "my-mac"}
-    T-->>R: OK, tunnel_id: "abc123"
-    Note over R,T: 3. WebSocket Keep-Alive<br/>保持长连接，等待客户端接入
-```
-
-关键点：
-- **远程机器主动向外发起连接**（出站连接），因此不需要公网 IP，也不需要防火墙入站规则
-- 中继服务维护一个 **设备名 → WebSocket 连接** 的映射表
-- 连接使用 **WSS（WebSocket Secure）**，即 WebSocket over TLS
-
-##### 第 3 步：客户端连接
-
-```mermaid
-sequenceDiagram
-    participant C as 客户端
-    participant T as GitHub<br/>Tunnel Relay
-    participant R as 远程 Server
-
-    C->>T: 1. 用户通过 GitHub 登录（OAuth 认证）
-    C->>T: 2. GET /tunnels（请求设备列表）
-    T-->>C: [{name: "my-mac", status}]
-    C->>T: 3. CONNECT tunnel/my-mac
-    Note over T: 4. 中继服务桥接两个 WebSocket<br/>客户端 WSS ↔ 远程 Server WSS
-    C<<->>R: 5. VS Code UI 协议双向数据流
-```
-
-- 客户端可以是浏览器（vscode.dev）或 VS Code 桌面客户端
-- 客户端同样使用 WSS 连接到中继服务
-- **中继服务的核心工作**：将来自客户端 WebSocket 的数据帧转发到对应的远程机器 WebSocket，反之亦然
-
----
-
-#### 数据流详解
-
-##### 协议层次
-
-```
-┌─────────────────────────────┐
-│     VS Code UI Protocol     │  ← 编辑器状态、光标、选区、文件变更
-├─────────────────────────────┤
-│     JSON-RPC / MessagePack  │  ← 序列化层
-├─────────────────────────────┤
-│     WebSocket (WSS)         │  ← 全双工传输
-├─────────────────────────────┤
-│     TLS 1.3                 │  ← 端到端加密（中继不解密）
-└─────────────────────────────┘
-```
-
-##### 哪些数据走隧道？
-
-| 数据类型 | 流向 | 说明 |
-|---------|------|------|
-| 编辑器 UI 状态 | 双向 | 光标位置、选区、滚动、标签页状态 |
-| 文件内容 | 双向 | 打开/保存文件时传输文件内容 |
-| 终端 I/O | 双向 | 终端输入命令 → 远程执行 → 输出回传 |
-| 扩展 API 调用 | 双向 | 扩展运行在远程，UI 在本地 |
-| 调试协议 (DAP) | 双向 | 断点、调用栈、变量查看 |
-| Git 操作 | 远程→云端 | `git push/pull` 从远程机器直接发出 |
-| Copilot AI 请求 | 远程→GitHub Cloud | AI 推理请求从远程 Server 直接发出 |
-
-##### 计算位置分布
-
-| 客户端（轻量） | 远程机器（重） | GitHub 云端（AI） |
-|:---:|:---:|:---:|
-| UI 渲染 | 文件读写 | Copilot 模型推理 |
-| 输入事件 | 终端执行 | Code completion |
-| 显示输出 | 扩展运行 | Chat/Agent 响应 |
-| — | 代码分析 | — |
-| — | 编译构建 | — |
-| — | Git 操作 | — |
-| — | LSP 语言服务 | — |
-
-这就是为什么你可以用 iPad 甚至手机连接一台强大的开发服务器 —— 客户端只需要渲染 UI，几乎零计算负载。
-
----
-
-#### 安全模型
-
-> **🔐 身份认证：GitHub OAuth 2.0**
->
-> 只有 Token 所属的 GitHub 用户能连接。
-
-> **🔒 传输加密：TLS 1.3 (WSS)**
->
-> 中继服务无法解密 payload。
-
-> **🛡️ 访问控制：同一 GitHub 账号原则**
->
-> A 用户的设备列表对 B 用户不可见。
-
-> **⏹️ 即时终止：code tunnel kill / unregister**
->
-> 随时可切断连接或注销设备。
-
-**重要细节**：虽然中继服务负责转发数据，但 VS Code UI Protocol 本身就包含端到端加密，中继服务只看到加密后的二进制帧，无法读取你的代码或终端内容。
-
----
-
-#### 断连与恢复机制
-
-```
-正常连接：
-  客户端 ◄════ WSS ════► 中继 ◄════ WSS ════► 远程 Server
-
-网络抖动（客户端断连）：
-  客户端 ──╳── 中继 ◄════ WSS ════► 远程 Server
-              ↑                            ↑
-              等待重连              终端进程继续运行！
-                                    Agent 任务继续执行！
-
-客户端重连：
-  客户端 ◄════ WSS ════► 中继 ◄════ WSS ════► 远程 Server
-              ↑                            ↑
-              桥接恢复              编辑器状态、终端输出
-                                   自动恢复到断连前状态
-```
-
-这就是为什么断连期间远程终端进程、Agent 任务**继续执行，不会中止**。
-
----
+客户端断开不等于停止远程机上的进程，但终端能否恢复、Agent 是否继续执行，取决于远程机、VS Code Server 或 Agent Host 是否仍在运行，以及工具是否依赖已断开的客户端。重连后先检查任务状态和远程文件；不要假定未保存编辑、终端输出或任务都能自动恢复。
 
 #### 与 Remote-SSH 的本质区别
 
 | 维度 | Remote Tunnels | Remote-SSH |
 |------|:---:|:---:|
-| **连接发起方** | 远程机器主动出站连接 | 客户端主动连接远程 SSH 端口 |
-| **网络要求** | 双方都不需要公网 IP | 远程需要可达 IP + 开放 22 端口 |
-| **中转机制** | GitHub 中继服务器桥接 | 直连 TCP |
-| **NAT 穿透** | ✅ 天然支持（出站连接） | ❌ 需要端口映射/内网穿透 |
-| **认证方式** | GitHub OAuth | SSH Key / 密码 |
-| **延迟** | 略高（经过中继） | 较低（直连） |
-
----
-
-#### 一句话总结
-
-> **Remote Tunnels = 远程机器主动向 GitHub 中继服务建立 WebSocket 长连接 → 客户端也连接同一个中继服务 → 中继服务桥接两个 WebSocket，透明转发 VS Code UI Protocol → 实现"你的浏览器/VS Code 只是一个远程桌面"，所有计算都在远程机器上完成。**
+| **连接发起方** | 双方主动向 Azure 服务出站 | 客户端发起 SSH 连接 |
+| **网络要求** | 不需要公网 IP 或入站端口 | 客户端需要能到达 SSH 服务，可经内网、VPN 或跳板机 |
+| **中转机制** | Microsoft Dev Tunnels 中继 | 可直连，也可经 SSH 跳板机 |
+| **认证方式** | GitHub 或 Microsoft 账号 | 取决于 SSH 服务的认证配置 |
 
 ---
 
@@ -324,11 +166,7 @@ code --version
 code tunnel
 ```
 
-首次使用会提示用 GitHub 账号认证：
-1. 终端会显示一个 8 位设备码
-2. 打开 https://github.com/login/device
-3. 输入设备码并授权
-4. 认证成功后，隧道自动启动
+首次使用时按终端提示登录并接受服务端许可条款。若选择 GitHub 且提示设备码，在提示给出的验证页面（如 <https://github.com/login/device>）输入设备码并授权。客户端连接时使用同一个 GitHub 或 Microsoft 账号。
 
 启动成功后会显示：
 
@@ -341,7 +179,7 @@ Open this link in your browser: https://vscode.dev/tunnel/<机器名>
 - **浏览器**：打开 `https://vscode.dev/tunnel/<机器名>`
 - **VS Code**：Cmd + Shift + P → **`Remote Tunnels: Connect to Tunnel...`** → 选择目标机器
 
-连接成功后，你就拥有了远程机器的完整开发环境。
+连接成功后，确认左下角的远程指示器显示目标机器，再通过 **File > Open Folder** 选择远程项目目录。
 
 ---
 
@@ -379,7 +217,7 @@ Service is running
 适合：手机、平板、临时电脑、不想装 VS Code 的场景。
 
 1. 打开 https://vscode.dev
-2. 登录 GitHub 账号
+2. 使用托管隧道时的同一账号登录
 3. 点击左下角 → **`Connect to Tunnel...`**
 4. 选择目标机器
 
@@ -390,12 +228,6 @@ Service is running
 1. Cmd + Shift + P → **`Remote Tunnels: Connect to Tunnel...`**
 2. 选择目标机器
 3. 新窗口自动打开，进入远程环境
-
-### 5.3 通过 GitHub Mobile App
-
-在 GitHub 手机 App 中，可以通过 Codespaces 入口连接到隧道机器（需同一 GitHub 账号）。
-
----
 
 ## 6. 后台服务模式
 
@@ -440,7 +272,7 @@ cat ~/.vscode-server/tunnel.log
 
 ### 7.2 注销设备
 
-彻底从你的 GitHub 账号中移除某台设备：
+移除当前账号与该机器的隧道注册关联：
 
 ```bash
 # 在要注销的设备上
@@ -451,51 +283,72 @@ code tunnel unregister
 
 ### 7.3 关闭隧道自动连接
 
-如果你设置了 VS Code 启动时自动开启隧道，在设置中关闭：
-
-```json
-{
-  "remote.tunnels.access": false
-}
-```
+如果从 VS Code 界面启动了隧道，使用 **Remote Tunnels: Turn off Remote Tunnel Access...**。如果安装了后台服务，使用 `code tunnel service uninstall`；如果是前台 CLI，在启动它的终端按 `Ctrl+C`。
 
 ### 7.4 安全注意事项
 
-- ✅ 隧道通过 GitHub OAuth 认证，只有你的 GitHub 账号能连接
-- ✅ 数据传输经过 TLS 加密
-- ✅ 可以随时 `code tunnel kill` 或 `code tunnel unregister` 终止访问
-- ⚠️ 不要在不受信任的网络中让隧道长期无人值守运行
-- ⚠️ 注销设备后，所有已保存的认证信息将失效
+- 默认由托管和连接两端使用同一个 GitHub 或 Microsoft 账号；只从受信任的设备连接，因为所打开的源码会到达客户端。
+- VS Code 远程会话的端到端加密，不等于 Copilot 请求或 Web 预览沿用同一安全边界。需要预览开发服务时，检查访问范围，不要公开含敏感数据的端口。
+- 停止隧道、注销隧道注册和撤销账号授权是不同操作。`code tunnel unregister` 不等于撤销所有已保存的登录凭证，也不等于取消正在运行的 Agent 任务。
 
 ---
 
 ## 8. 与 Copilot Agent 配合
 
-### 8.1 性能模型
+### 8.1 四个问题判断数据流
 
-远程隧道模式下，Copilot Agent 的执行位置如下：
+以「用笔记本连接远程开发机，打开项目后让 Copilot 补测试」为例：
 
+| 问题 | 典型答案 |
+|------|----------|
+| **文件落在哪？** | 项目和 Git 工作树在远程开发机上。打开文件后，客户端有该文件的编辑器缓冲区；保存或 Agent 应用修改后，变更写入目标工作区。如果会话使用单独的 Git worktree 或容器，以会话选中的目录为准。 |
+| **工具在哪跑？** | 在远程工作区运行的终端、构建、测试以及该会话的工作区工具，使用远程环境。客户端也运行编辑器逻辑及部分本地或 Web 扩展，可为会话提供工具。MCP 工具要看服务器部署位置；显式选择 **Cloud session** 时，Agent 则在托管环境执行。 |
+| **模型请求从哪发？** | 由处理该功能的扩展、Agent 运行时或客户端组件发起，不是 `code tunnel` 自动代发，也不能只凭远程终端的位置推断。实际网络出口取决于功能、版本、会话环境和代理配置；可通过两端的代理或出口日志核对。 |
+| **上下文最终发给谁？** | 使用 Copilot 托管模型时，模型请求发到 Copilot 服务并由所选模型处理。BYOK 或受支持的本地模型则按所配置的提供方和部署处理。工具查询、仓库索引和遥测有各自的数据流，不能用模型请求的目的地来概括。 |
+
+### 8.2 补全、Chat 和 Agent 怎么用上下文
+
+- **行内补全**：不打开 Chat 也可能发出请求。光标附近代码和选取的相关上下文可能用于生成建议；接受建议后先更新缓冲区，再由保存流程写入远程文件。
+- **Chat 问答**：提示词、选区、引用的文件内容及对话历史可能进入请求。问答不等于保存或修改远程文件。
+- **Agent**：可按权限搜索和读文件、修改代码、运行测试；工具结果可能进入下一轮请求。比如测试失败后，相关错误栈、路径、日志，甚至误打印的密钥，都可能成为模型上下文。
+
+下面是 **Agent 在远程工作区调用工具、模型使用 Copilot 托管服务**的典型流程。「模型请求发起端」是逻辑角色，不表示 HTTPS 请求固定从远程机发出。
+
+<!-- mermaid-checked: no \n, no em-dash/en-dash, no {} in labels, subgraphs are id["label"], arrows are -->|"label"|, all subgraphs closed by end, ids unique -->
 ```mermaid
-graph LR
-    subgraph "📱 本地（手机/平板）"
-        A[UI 渲染<br/>近乎零负载]
-    end
-    subgraph "🖥️ 远程机器"
-        B[Agent 执行<br/>代码分析/终端/编辑]
-    end
-    subgraph "☁️ GitHub Cloud"
-        C[AI 模型推理]
-    end
+flowchart LR
+    ChatView["客户端 Chat"]
+    AgentLink["VS Code 远程会话"]
+    AgentRuntime["Agent 运行时"]
+    AgentWorkspace[("远程项目文件")]
+    AgentTerminal["远程终端和测试"]
+    ModelRequester["模型请求发起端"]
+    HostedModel["Copilot 服务和所选托管模型"]
 
-    A <-->|UI 协议| B
-    B <-->|API| C
+    ChatView -->|"任务和审批"| AgentLink
+    AgentLink -->|"与远程工作区交互"| AgentRuntime
+    AgentRuntime -->|"搜索、读写文件"| AgentWorkspace
+    AgentWorkspace -->|"相关源码"| AgentRuntime
+    AgentRuntime -->|"按权限执行命令"| AgentTerminal
+    AgentTerminal -->|"日志和测试结果"| AgentRuntime
+    AgentRuntime -->|"本轮提示词和相关上下文"| ModelRequester
+    ModelRequester -->|"独立的 HTTPS 请求"| HostedModel
+    HostedModel -->|"回答或工具调用请求"| ModelRequester
+    ModelRequester -->|"交给运行时继续处理"| AgentRuntime
+    AgentRuntime -->|"回答、差异和执行进度"| AgentLink
+    AgentLink -->|"显示结果"| ChatView
 ```
 
-- 你的手机只负责显示界面
-- 远程机器的 CPU 承担所有计算工作
-- Copilot 的 AI 推理在云端完成
+### 8.3 不要把隧道加密当成 AI 数据隔离
 
-### 8.2 Agent 记忆与状态保存位置
+- **远程会话**：打开文件和回传终端输出走加密隧道；这不会自动触发 Copilot 上传。
+- **模型推理**：每轮使用选取的上下文，不是每次把整个仓库发给模型，也不一定只用当前文件。
+- **语义索引**：支持的托管仓库可以使用已有索引。如果账号策略和工作区设置允许使用 **External ingest**，可索引文件可能另行上传到 GitHub。这与单次推理请求是两条链路。
+- **敏感文件**：`.gitignore` 和 [Copilot 内容排除](https://docs.github.com/en/copilot/concepts/security-governance-and-network-settings/content-exclusion)不能当作文件系统权限。打开或选中被忽略的文件仍可能提供上下文；内容排除对远程文件系统、符号链接及第三方工具有适用限制。敏感文件应靠权限隔离；有禁止外发要求的工作区，应通过组织策略限制托管 AI 和外部索引。
+
+参考：[VS Code 工作区上下文与语义索引](https://code.visualstudio.com/docs/agents/reference/workspace-context) · [Agent Host 架构](https://code.visualstudio.com/docs/agents/concepts/agent-host) · [Copilot 网络端点](https://docs.github.com/en/copilot/reference/copilot-allowlist-reference)
+
+### 8.4 Agent 记忆与状态保存位置
 
 这里的“记忆”不是单一的数据项，需要区分项目上下文、执行状态、聊天记录和客户端缓存：
 
@@ -512,20 +365,26 @@ graph LR
 
 对于长时间任务，建议让任务在远程终端或服务器上的独立进程中运行，并使用 `tmux`、`screen` 或后台服务管理。仅依赖当前客户端前台会话的任务，在客户端断开、VS Code Server 重启或认证失效时，可能无法继续。
 
-### 8.3 典型场景
+### 8.5 网络不稳定时的表现
+
+- **已独立运行的任务**：远程终端进程、后台服务或已脱离客户端的任务通常会继续执行
+- **依赖前台会话的任务**：可能因客户端断开、Server 重启或进程退出而中止
+- **恢复连接**：远程工作区仍在服务器上；编辑器标签页、终端输出和聊天上下文能否完整恢复，取决于具体客户端及会话保存状态
+- **建议**：长时间任务先确认网络环境稳定
+
+### 8.6 在自己的环境中验证
+
+1. 在远程窗口的终端运行 `hostname` 和 `pwd`，核对远程机或容器及项目目录。也可以让 Agent 用只读命令报告位置，确认该会话使用的是预期环境。
+2. 保存一个无敏感内容的测试文件，再从远程机的独立终端检查文件内容或运行 `git diff`，确认写入位置。
+3. 用无敏感样例发起一轮 Chat，查看 [Chat Debug View](https://code.visualstudio.com/docs/agents/agent-troubleshooting/chat-debug-view) 中记录的模型请求、上下文和工具结果。若要确认是谁发起出站请求，再按时间对照本地和远程代理或出口日志；不要公开共享可能含源码的调试记录。
+
+### 8.7 典型场景
 
 | 场景 | 方案 |
 |------|------|
 | iPad 在地铁上改代码 | iPad 浏览器 → vscode.dev → 隧道连办公室电脑 |
 | 家里笔记本性能弱 | 轻薄本 → 隧道连公司高性能服务器 |
 | 临时查看代码 | 手机浏览器 → vscode.dev → 隧道连开发机 |
-
-### 8.4 网络不稳定时的表现
-
-- **已独立运行的任务**：远程终端进程、后台服务或已脱离客户端的任务通常会继续执行
-- **依赖前台会话的任务**：可能因客户端断开、Server 重启或进程退出而中止
-- **恢复连接**：远程工作区仍在服务器上；编辑器标签页、终端输出和聊天上下文能否完整恢复，取决于具体客户端及会话保存状态
-- **建议**：长时间任务先确认网络环境稳定
 
 ---
 
@@ -549,13 +408,13 @@ kill <PID>          # 清理后重试
 ```
 
 常见原因：
-- 网络不通（需要能访问 `*.tunnels.api.visualstudio.com`）
-- GitHub 认证过期（注销后重新认证）
+- 网络不通（根据 [Dev Tunnels 网络要求](https://learn.microsoft.com/azure/developer/dev-tunnels/security#domains)检查两端的出站访问）
+- 隧道登录已过期（按 CLI 或 VS Code 的提示重新认证）
 - 旧版本 VS Code（更新到最新版）
 
 ### 9.3 客户端连接失败
 
-- 确保使用**同一 GitHub 账号**连接
+- 确保使用**托管隧道时的同一 GitHub 或 Microsoft 账号**连接
 - 检查远程机器隧道是否在运行：`code tunnel status`
 - 检查是否在同一账号下：在 vscode.dev 确认设备列表
 
@@ -651,7 +510,7 @@ tmux attach -t project
 
 1. **不要在公共网络下无人值守**：虽然安全，但物理访问风险依然存在
 2. **大文件操作注意**：远程文件操作走网络，大文件传输会比本地慢
-3. **Git 操作在远程执行**：commit/push/pull 都在远程机器上运行
+3. **先确认终端和工作区位置**：在远程终端执行的 Git 命令操作远程工作树
 4. **保持 VS Code 更新**：客户端和远程 Server 版本匹配才能获得最佳体验
 5. **网络要求**：建议上行带宽 ≥ 2 Mbps，延迟 < 200ms
 
@@ -688,4 +547,4 @@ code tunnel kill        # 或用 Ctrl+C
 | 清理旧记录 | `code tunnel prune` |
 | 客户端连接 | `vscode.dev/tunnel/<name>` |
 | VS Code 内连接 | `Remote Tunnels: Connect to Tunnel` |
-| 关闭自动启动 | 设置 `remote.tunnels.access: false` |
+| 关闭隧道托管 | 界面选择 **Turn off Remote Tunnel Access**；前台 CLI 按 `Ctrl+C`；后台服务用 `code tunnel service uninstall` |
